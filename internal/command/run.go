@@ -18,22 +18,61 @@ const (
 	defaultSshPassword = "admin"
 )
 
-var runCommand = &cobra.Command{
-	Use: "run",
-	RunE: func(cmd *cobra.Command, args []string) error {
+type runOptions struct {
+	sshPassword string
+	sshUserName string
+}
+
+func NewRunCommand() *cobra.Command {
+	var cmd = &cobra.Command{
+		Use:  "run <path_to_script> <stage_name>",
+		Args: cobra.ExactArgs(2),
+	}
+
+	var runOptions runOptions
+
+	cmd.Flags().StringVar(&runOptions.sshUserName, "ssh-username", "", "The SSH username used to SSH into the VM")
+	cmd.Flags().StringVar(&runOptions.sshPassword, "ssh-password", "", "The SSH password used to SSH into the VM")
+
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		env, ok := cmd.Context().Value(contextKey("env")).(gitlab.Environment)
 		if !ok {
 			return fmt.Errorf("failed to get environment from context")
 		}
 
-		return executeRun(cmd.Context(), env, args)
-	},
+		runArgs := runArgs{
+			scriptPath:  args[0],
+			sshPassword: firstNonEmptyString(env.SSHPassword, runOptions.sshPassword, defaultSshPassword),
+			sshUserName: firstNonEmptyString(env.SSHUserName, runOptions.sshUserName, defaultSshUserName),
+			stageName:   args[1],
+		}
+
+		return executeRun(cmd.Context(), env, runArgs)
+	}
+
+	return cmd
 }
 
-func executeRun(ctx context.Context, env gitlab.Environment, args []string) error {
+func firstNonEmptyString(strs ...string) string {
+	for _, s := range strs {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+type runArgs struct {
+	scriptPath  string
+	sshPassword string
+	sshUserName string
+	stageName   string
+}
+
+func executeRun(ctx context.Context, env gitlab.Environment, runArgs runArgs) error {
 	log.SetOutput(os.Stderr)
 
-	log.Printf("running run stage %s\n", args[1])
+	log.Printf("running run stage %s\n", runArgs.stageName)
 
 	apiClientConfig := getAPIClientConfig(env)
 	apiClient, err := ankacloud.NewAPIClient(apiClientConfig)
@@ -73,28 +112,18 @@ func executeRun(ctx context.Context, env gitlab.Environment, args []string) erro
 	nodeIp = node.IP
 	log.Printf("node IP: %s\n", nodeIp)
 
-	gitlabScriptFile, err := os.Open(args[0])
+	gitlabScriptFile, err := os.Open(runArgs.scriptPath)
 	if err != nil {
-		return fmt.Errorf("failed to open script file at %q: %w", args[0], err)
+		return fmt.Errorf("failed to open script file at %q: %w", runArgs.scriptPath, err)
 	}
 	defer gitlabScriptFile.Close()
-	log.Printf("gitlab script path: %s", args[0])
-
-	sshUserName := env.SSHUserName
-	if sshUserName == "" {
-		sshUserName = defaultSshUserName
-	}
-
-	sshPassword := env.SSHPassword
-	if sshPassword == "" {
-		sshPassword = defaultSshPassword
-	}
+	log.Printf("gitlab script path: %s", runArgs.scriptPath)
 
 	sshClientConfig := &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		User:            sshUserName,
+		User:            runArgs.sshUserName,
 		Auth: []ssh.AuthMethod{
-			ssh.Password(sshPassword),
+			ssh.Password(runArgs.sshPassword),
 		},
 	}
 

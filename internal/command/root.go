@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(cleanupCommand, prepareCommand, runCommand, configCommand)
+	rootCmd.AddCommand(cleanupCommand, prepareCommand, NewRunCommand(), configCommand)
 }
 
 func Execute(ctx context.Context) error {
